@@ -1,0 +1,12 @@
+587245bab090d3eb38be886b8deebc1e *DESCRIPTION
+f54c8df68581d837eac7e23b9302068b *LICENSE
+7ced4f9d9d72defeb22ef5c88606aa99 *NAMESPACE
+45dc24a22828142c5297f3765b98a502 *NEWS.md
+b501b47881fa8898dcf999e18d712e5c *R/count.R
+d508282a7f509bb91ee0f8d80f50aa8b *R/textfeatures.R
+16aba351cfd7f8047605d71bc1a450b7 *R/utils.R
+1bad5bf628b3900734329ac3759307a3 *README.md
+c0e7738ae4afa212e6a3aa81ed801bf1 *man/textfeatures.Rd
+9a8090baa8dfc9ef338b0160707e3c1e *tests/testthat.R
+32bd1d410d5343c6f5da81d3e09dea04 *tests/testthat/test-main.R
+361e431def0f448a79419623ec449a14 *tools/readme/readme.png
