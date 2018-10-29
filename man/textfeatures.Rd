@@ -4,13 +4,32 @@
 \alias{textfeatures}
 \title{textfeatures}
 \usage{
-textfeatures(x)
+textfeatures(x, sentiment = TRUE, word_dims = NULL, threads = 1,
+  normalize = TRUE, export = FALSE)
 }
 \arguments{
-\item{x}{Input data. Should be character vector, data frame, or grouped data
-frame (grouped_df) with character variable of interest named "text". If
-grouped_df is provided, then features will be averaged across all
-observations for each group.}
+\item{x}{Input data. Should be character vector or data frame with character
+variable of interest named "text". If a data frame then the first "id|*_id"
+variable, if found, is assumed to be an ID variable.}
+
+\item{sentiment}{Logical, indicating whether to return sentiment analysis
+features, the variables \code{sent_afinn} and \code{sent_bing}. Defaults to
+FALSE. Setting this to true will speed things up a bit.}
+
+\item{word_dims}{Integer indicating the desired number of word2vec dimension
+estimates. When NULL, the default, this function will pick a reasonable
+number of dimensions (ranging from 2 to 200) based on size of input. To
+disable word2vec estimates, set this to 0 or FALSE.}
+
+\item{threads}{Integer, specifying the number of threads to use when generating
+word2vec estimates. Defaults to 1. Ignored if \code{word_dims = 0}.}
+
+\item{normalize}{Logical indicating whether to normalize (mean center,
+sd = 1) features. Defaults to TRUE.}
+
+\item{export}{Logical indicating whether to store sufficient information for
+exporting the feature extraction process (stores the means, standard deviations,
+and the word2vec reference object, which can then be used to process new data).}
 }
 \value{
 A tibble data frame with extracted features as columns.
@@ -43,7 +62,9 @@ textfeatures(trump_tweets)
 df <- data.frame(
   id = c(1, 2, 3),
   text = c("this is A!\\t sEntence https://github.com about #rstats @github",
-    "doh", "The following list:\\n- one\\n- two\\n- three\\nOkay!?!")
+    "and another sentence here",
+    "The following list:\\n- one\\n- two\\n- three\\nOkay!?!"),
+  stringsAsFactors = FALSE
 )
 
 ## get text features of a data frame with "text" variable

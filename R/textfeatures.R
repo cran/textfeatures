@@ -1,13 +1,25 @@
-utils::globalVariables(c("text2", "n_chars", "text"))
 
 #' textfeatures
 #'
 #' Extracts features from text vector.
 #'
-#' @param x Input data. Should be character vector, data frame, or grouped data
-#'   frame (grouped_df) with character variable of interest named "text". If
-#'   grouped_df is provided, then features will be averaged across all
-#'   observations for each group.
+#' @param x Input data. Should be character vector or data frame with character
+#'   variable of interest named "text". If a data frame then the first "id|*_id"
+#'   variable, if found, is assumed to be an ID variable.
+#' @param sentiment Logical, indicating whether to return sentiment analysis
+#'   features, the variables \code{sent_afinn} and \code{sent_bing}. Defaults to
+#'   FALSE. Setting this to true will speed things up a bit.
+#' @param word_dims Integer indicating the desired number of word2vec dimension
+#'   estimates. When NULL, the default, this function will pick a reasonable
+#'   number of dimensions (ranging from 2 to 200) based on size of input. To
+#'   disable word2vec estimates, set this to 0 or FALSE.
+#' @param threads Integer, specifying the number of threads to use when generating
+#'   word2vec estimates. Defaults to 1. Ignored if \code{word_dims = 0}.
+#' @param normalize Logical indicating whether to normalize (mean center,
+#'   sd = 1) features. Defaults to TRUE.
+#' @param export Logical indicating whether to store sufficient information for
+#'   exporting the feature extraction process (stores the means, standard deviations,
+#'   and the word2vec reference object, which can then be used to process new data).
 #' @return A tibble data frame with extracted features as columns.
 #' @examples
 #'
@@ -34,134 +46,200 @@ utils::globalVariables(c("text2", "n_chars", "text"))
 #' df <- data.frame(
 #'   id = c(1, 2, 3),
 #'   text = c("this is A!\t sEntence https://github.com about #rstats @github",
-#'     "doh", "The following list:\n- one\n- two\n- three\nOkay!?!")
+#'     "and another sentence here",
+#'     "The following list:\n- one\n- two\n- three\nOkay!?!"),
+#'   stringsAsFactors = FALSE
 #' )
 #'
 #' ## get text features of a data frame with "text" variable
 #' textfeatures(df)
 #'
 #' @export
-textfeatures <- function(x) UseMethod("textfeatures")
-
-#' @export
-textfeatures.character <- function(x) {
-  x <- tibble::data_frame(text = x, validate = FALSE)
-  textfeatures(x)
+textfeatures <- function(x, sentiment = TRUE, word_dims = NULL,
+                         threads = 1, normalize = TRUE, export = FALSE) {
+  UseMethod("textfeatures")
 }
 
 #' @export
-textfeatures.factor <- function(x) {
-  x <- as.character(x)
-  textfeatures(x)
+textfeatures.character <- function(x, sentiment = TRUE, word_dims = NULL,
+                                   threads = 1, normalize = TRUE, export = FALSE) {
+  textfeatures(data.frame(text = x, row.names = NULL, stringsAsFactors = FALSE),
+    sentiment = sentiment, word_dims = word_dims, threads = threads,
+    normalize = normalize, export = export)
 }
 
 #' @export
-#' @importFrom dplyr transmute
-textfeatures.data.frame <- function(x) {
+textfeatures.factor <- function(x, sentiment = TRUE, word_dims = NULL,
+                                threads = 1, normalize = TRUE, export = FALSE) {
+  textfeatures(as.character(x), sentiment = sentiment,
+    word_dims = word_dims, threads = threads, normalize = normalize, export = export)
+}
+
+#' @export
+#' @importFrom tibble as_tibble
+#' @importFrom tokenizers tokenize_words
+textfeatures.data.frame <- function(x, sentiment = TRUE, word_dims = NULL,
+                                    threads = 1, normalize = TRUE, export = FALSE) {
+  ## initialize output data
+  o <- list()
+
   ## validate input
   stopifnot("text" %in% names(x))
   ## make sure "text" is character
-  if (is.factor(x$text)) {
-    x$text <- as.character(x$text)
-  }
+  text <- as.character(x$text)
   ## validate text class
-  stopifnot(is.character(x$text))
-  ## remove URLs, mentions, etc, and convert some non-ascii into ascii equiv
-  x <- text_cleaner(x)
-  ## extract features for all observations
-  suppressMessages(dplyr::transmute(x,
-    n_chars = n_charS(text2),
-    n_commas = n_commas(text2),
-    n_digits = n_digits(text2),
-    n_exclaims = n_exclaims(text2),
-    n_extraspaces = n_extraspaces(text2),
-    n_hashtags = n_hashtags(text),
-    n_lowers = n_lowers(text2),
-    n_lowersp = (n_lowers + 1L) / (n_chars + 1L),
-    n_mentions = n_mentions(text),
-    n_periods = n_periods(text2),
-    n_urls = n_urls(text),
-    n_words = n_words(text2),
-    n_caps = n_caps(text2),
-    n_nonasciis = n_nonasciis(text2),
-    n_puncts = n_puncts(text2),
-    n_capsp = (n_caps + 1L) / (n_chars + 1L),
-    n_charsperword = (n_chars + 1L) / (n_words + 1L)
-  ))
+  stopifnot(is.character(text), is.numeric(threads), is.logical(sentiment))
+
+  ## try to determine ID/ID-like variable, or create a new one
+  if ("id" %in% names(x)) {
+    idname <- "id"
+    o$id <- .subset2(x, "id")
+  } else if (any(grepl("[._]?id$", names(x)))) {
+    idname <- grep("[._]?id$", names(x), value = TRUE)[1]
+    o$id <- .subset2(x, grep("[._]?id$", names(x))[1])
+  } else if ((is.character(x[[1]]) || is.factor(x[[1]])) && names(x)[1] != "text") {
+    idname <- names(x)[1]
+    o$id <- as.character(x[[1]])
+  } else {
+    idname <- "id"
+    o$id <- as.character(seq_len(nrow(x)))
+  }
+
+  ## number of URLs/hashtags/mentions
+  o$n_urls = n_urls(text)
+  o$n_hashtags = n_hashtags(text)
+  o$n_mentions = n_mentions(text)
+
+  ## scrub urls, hashtags, mentions
+  text = text_cleaner(text)
+
+  ## count various character types
+  o$n_chars = n_charS(text)
+  o$n_commas = n_commas(text)
+  o$n_digits = n_digits(text)
+  o$n_exclaims = n_exclaims(text)
+  o$n_extraspaces = n_extraspaces(text)
+  o$n_lowers = n_lowers(text)
+  o$n_lowersp = (o$n_lowers + 1L) / (o$n_chars + 1L)
+  o$n_periods = n_periods(text)
+  o$n_words = n_words(text)
+  o$n_caps = n_caps(text)
+  o$n_nonasciis = n_nonasciis(text)
+  o$n_puncts = n_puncts(text)
+  o$n_capsp = (o$n_caps + 1L) / (o$n_chars + 1L)
+  o$n_charsperword = (o$n_chars + 1L) / (o$n_words + 1L)
+
+  ## estimate sentiment
+  if (sentiment) {
+    o$sent_afinn = syuzhet::get_sentiment(text, method = "afinn")
+    o$sent_bing = syuzhet::get_sentiment(text, method = "bing")
+  }
+
+  ## tokenize into words
+  text <- prep_wordtokens(text)
+
+  ## if null, pick reasonable number of dims
+  if (is.null(word_dims)) {
+    if (nrow(x) > 10000) {
+      n_vectors <- 200
+    } else if (nrow(x) > 1000) {
+      n_vectors <- 100
+    } else if (nrow(x) > 300) {
+      n_vectors <- 50
+    } else if (nrow(x) > 60) {
+      n_vectors <- 20
+    } else {
+      n_vectors <- ceiling(nrow(x) / 2)
+    }
+  }
+
+  ## if specified, set as n_vectors
+  if (is.numeric(word_dims)) {
+    n_vectors <- word_dims
+  }
+
+  ## if false, set to 0
+  if (identical(word_dims, FALSE)) {
+    n_vectors <- 0
+  }
+
+  ## if applicable, get w2v estimates
+  if (identical(n_vectors, 0)) {
+    w <- NULL
+  } else {
+    w <- tryCatch(word2vec_obs(text, n_vectors, threads, export),
+      error = function(e) return(NULL))
+  }
+
+  ## count number of polite, POV, to-be, and preposition words.
+  o$n_polite <- politeness(text)
+  o$n_first_person <- first_person(text)
+  o$n_first_personp <- first_personp(text)
+  o$n_second_person <- second_person(text)
+  o$n_second_personp <- second_personp(text)
+  o$n_third_person <- third_person(text)
+  o$n_tobe <- to_be(text)
+  o$n_prepositions <- prepositions(text)
+
+  ## convert to tibble
+  o <- tibble::as_tibble(o)
+
+  ## name ID variable
+  names(o)[names(o) == "id"] <- idname
+
+  ## merge with w2v estimates
+  o <- dplyr::bind_cols(o, w)
+
+  ## make exportable
+  if (export) {
+    m <- vapply(o[-1], mean, na.rm = TRUE, FUN.VALUE = numeric(1))
+    s <- vapply(o[-1], stats::sd, na.rm = TRUE, FUN.VALUE = numeric(1))
+    e <- list(means = m, sds = s)
+    e$w2v_dict <- attr(w, "w2v_dict")
+  }
+
+  ## normalize
+  if (normalize) {
+    o <- scale_normal(scale_count(o))
+  }
+
+  ## store export list as attribute
+  if (export) {
+    attr(o, "tf_export") <- e
+  }
+
+  ## return
+  o
 }
+
+
+
 
 #' @export
-#' @importFrom dplyr transmute summarise_all
-textfeatures.grouped_df <- function(x) {
-  stopifnot("text" %in% names(x))
-  ## remove URLs, mentions, etc, and convert some non-ascii into ascii equiv
-  x <- text_cleaner(x)
-  ## extract features for all observations
-  x <- suppressMessages(dplyr::transmute(x,
-    n_chars = n_charS(text2),
-    n_commas = n_commas(text2),
-    n_digits = n_digits(text2),
-    n_exclaims = n_exclaims(text2),
-    n_extraspaces = n_extraspaces(text2),
-    n_hashtags = n_hashtags(text),
-    n_lowers = n_lowers(text2),
-    n_lowersp = (n_lowers + 1L) / (n_chars + 1L),
-    n_mentions = n_mentions(text),
-    n_periods = n_periods(text2),
-    n_urls = n_urls(text),
-    n_words = n_words(text2),
-    n_caps = n_caps(text2),
-    n_nonasciis = n_nonasciis(text2),
-    n_puncts = n_puncts(text2),
-    n_capsp = (n_caps + 1L) / (n_chars + 1L),
-    n_charsperword = (n_chars + 1L) / (n_words + 1L)
-  ))
-  ## summarise (via mean) by group and return features data
-  dplyr::summarise_all(x, mean, na.rm = TRUE)
-}
-
-
-text_cleaner <- function(x) {
-  ## remove URLs, mentions, and hashtags
-  x$text2 <- gsub("https?:[[:graph:]]+|@\\S+|#\\S+", "", x$text)
-  ## convert non-ascii into ascii exclamation marks
-  x$text2 <- gsub("\u00A1|\u01C3|\u202C|\u203D|\u2762", "\u0021", x$text2)
-  ## convert non-ascii into ascii apostrophes
-  x$text2 <- gsub(
-    "\u2018|\u2019|\u05F3|\u02B9|\u02Bc|\u02C8|\u0301|\u05F3|\u2032|\uA78C",
-    "\u0027", x$text2)
-  ## convert non-ascii into ascii commas
-  x$text2 <- gsub("\u2795", "\u002B", x$text2)
-  ## convert non-ascii into ascii hypthens
-  x$text2 <- gsub("\u2010|\u2011|\u2012|\u2013|\u2043|\u2212|\u10191", "\u002D", x$text2)
-  ## convert non-ascii into ascii periods
-  x$text2 <- gsub("\u06D4|\u2E3C|\u3002", "\u002E", x$text2)
-  ## convert non-ascii into ascii elipses
-  x$text2 <- gsub("\u2026", "\u002E\u002E\u002E", x$text2)
-  ## return data frame with new text2 var
-  x
-}
-
-
-#' @export
-textfeatures.list <- function(x) {
+#' @importFrom purrr map_lgl map
+textfeatures.list <- function(x, sentiment = TRUE, word_dims = NULL,
+                              threads = 1, normalize = TRUE, export = FALSE) {
   ## if named list with "text" element
   if (!is.null(names(x)) && "text" %in% names(x)) {
     x <- x$text
-    return(textfeatures(x))
+    return(textfeatures(x, sentiment = sentiment,
+      word_dims = word_dims, threads = threads))
     ## if all elements are character vectors, return list of DFs
-  } else if (all(lengths(x) == 1L) && all(vply_lgl(x, is.character))) {
+  } else if (all(lengths(x) == 1L) && all(map_lgl(x, is.character))) {
     ## (list in, list out)
-    return(lapply(x, textfeatures))
+    return(map(x, textfeatures, sentiment = sentiment,
+      word_dims = word_dims, threads = threads, normalize = normalize, export = export))
   }
   ## if all elements are recursive objects containing "text" variable
-  if (all(vply_lgl(x, is.recursive)) &&
-      all(vply_lgl(x, ~ "text" %in% names(.)))) {
-    x <- lapply(x, "[[", "text")
-    return(lapply(x, textfeatures))
+  if (all(map_lgl(x, is.recursive)) &&
+      all(map_lgl(x, ~ "text" %in% names(.x)))) {
+    x <- map(x, ~ .x$text)
+    return(map(x, textfeatures, sentiment = sentiment,
+      word_dims = word_dims, threads = threads, normalize = normalize, export = export))
   }
   stop(paste0("Input is a list without a character vector named \"text\". ",
     "Are you sure the input shouldn't be a character vector or a data frame",
     "with a \"text\" variable?"), call. = FALSE)
 }
+
 
