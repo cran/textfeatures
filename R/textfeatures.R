@@ -167,7 +167,7 @@ textfeatures.data.frame <- function(x, sentiment = TRUE, word_dims = NULL,
   if (identical(n_vectors, 0)) {
     w <- NULL
   } else {
-    w <- tryCatch(word2vec_obs(text, n_vectors, threads, export),
+    w <- tryCatch(word_dims(text, n_vectors, export = export),
       error = function(e) return(NULL))
   }
 
@@ -241,5 +241,4 @@ textfeatures.list <- function(x, sentiment = TRUE, word_dims = NULL,
     "Are you sure the input shouldn't be a character vector or a data frame",
     "with a \"text\" variable?"), call. = FALSE)
 }
-
 
