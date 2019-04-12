@@ -4,11 +4,11 @@
 \alias{textfeatures}
 \title{textfeatures}
 \usage{
-textfeatures(x, sentiment = TRUE, word_dims = NULL, threads = 1,
-  normalize = TRUE, export = FALSE)
+textfeatures(text, sentiment = TRUE, word_dims = NULL,
+  normalize = TRUE, newdata = NULL)
 }
 \arguments{
-\item{x}{Input data. Should be character vector or data frame with character
+\item{text}{Input data. Should be character vector or data frame with character
 variable of interest named "text". If a data frame then the first "id|*_id"
 variable, if found, is assumed to be an ID variable.}
 
@@ -21,15 +21,11 @@ estimates. When NULL, the default, this function will pick a reasonable
 number of dimensions (ranging from 2 to 200) based on size of input. To
 disable word2vec estimates, set this to 0 or FALSE.}
 
-\item{threads}{Integer, specifying the number of threads to use when generating
-word2vec estimates. Defaults to 1. Ignored if \code{word_dims = 0}.}
-
 \item{normalize}{Logical indicating whether to normalize (mean center,
 sd = 1) features. Defaults to TRUE.}
 
-\item{export}{Logical indicating whether to store sufficient information for
-exporting the feature extraction process (stores the means, standard deviations,
-and the word2vec reference object, which can then be used to process new data).}
+\item{newdata}{If a textfeatures_model is supplied to text, supply this with
+new data to which you would like to apply the textfeatures_model.}
 }
 \value{
 A tibble data frame with extracted features as columns.

@@ -1,3 +1,10 @@
+# textfeatures 0.3.2
+
+# textfeatures 0.3.1
++ `textfeatures()` now exports the word vector model by default
++ Added `newdata` argument to allow feature extraction using previously defined
+word vector dimensions.
+
 # textfeatures 0.3.0
 + New implementation for estimating word vector dimensions for each string. Now
 uses the [text2vec](http://text2vec.org/) package
